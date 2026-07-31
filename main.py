@@ -90,6 +90,7 @@ class DetalleWindow(QDialog):
         categorias_tela = [
             "compra de tela",
             "envio de tela a tintorería",
+            "servicio de tejeduría - tela principal",
             "servicio de tejeduría",
             "servicio de tintorería",
             "servicio de reenconado",
@@ -368,6 +369,7 @@ class TrazabilidadWindow(QMainWindow):
             "hilado enviado a tejeduría",
             "hilado merma de tejeduría",
             "hilado consumido en tejeduría",
+            "servicio de tejeduría - tela principal",
             "servicio de tejeduría",
             "envio de tela a tintorería",
             "servicio de tintorería",
