@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
     QStatusBar, QMessageBox, QHeaderView, QGroupBox, QCheckBox,
     QFileDialog, QAbstractItemView, QDialog
 )
+from PySide6.QtGui import QIcon
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QColor
 
@@ -212,6 +213,7 @@ class TrazabilidadWindow(QMainWindow):
         self.resize(1000, 600)
         self._build_ui()
         self._update_status()
+        self.setWindowIcon(QIcon("logo/inspeccion.png"))
 
     # --- UI Setup ---
     def _build_ui(self):
