@@ -21,6 +21,8 @@ TEMAS = {
         "positivo": "#1B7A3A", "negativo": "#C0262D",
         "sel": "#CFE0F5", "sel_text": "#0B1A2E",
         "btn": "#FFFFFF", "btn_text": "#1F2328", "btn_hover": "#EAF0F8", "btn_pressed": "#D6E1EF",
+        # Gráficos (validados con el validador de paletas: CVD y contraste >= 3:1 sobre "base")
+        "serie_pos": "#2A78D6", "serie_neg": "#E34948", "grid": "#E1E0D9",
     },
     "oscuro": {
         "window": "#1E1F22", "base": "#2B2D30", "alt": "#313338", "text": "#E6E7EA",
@@ -29,12 +31,19 @@ TEMAS = {
         "positivo": "#6FD08C", "negativo": "#FF8A80",
         "sel": "#2F4F7A", "sel_text": "#FFFFFF",
         "btn": "#3A3D42", "btn_text": "#E6E7EA", "btn_hover": "#464A50", "btn_pressed": "#2A2C30",
+        "serie_pos": "#3987E5", "serie_neg": "#E66767", "grid": "#3A3D42",
     },
 }
 
 _settings = QSettings("TrazabilidadOPS", "Interfaz")
 _preferencia = "sistema"   # lo que eligió el usuario
 _actual = "claro"          # tema efectivo aplicado
+_observadores = []         # funciones a llamar cuando cambia el tema (ej. redibujar gráficos)
+
+
+def al_cambiar_tema(funcion):
+    """Registra una función sin argumentos que se ejecuta tras aplicar un tema."""
+    _observadores.append(funcion)
 
 
 def preferencia_guardada():
@@ -99,6 +108,12 @@ def _hoja_estilos(t):
         }}
         QPushButton#btnExportar:hover {{ background-color: #388E3C; }}
         QPushButton#btnExportar:pressed {{ background-color: #1B5E20; }}
+        QFrame#kpiTile {{
+            background-color: {t['base']}; border: 1px solid {t['border']}; border-radius: 6px;
+        }}
+        QLabel#kpiTitulo {{ color: {t['muted']}; font-size: 11px; }}
+        QLabel#kpiValor {{ color: {t['text']}; font-size: 22px; font-weight: bold; }}
+        QLabel#notaMuted {{ color: {t['muted']}; }}
         QLabel#totalLabel {{
             background-color: {t['total']}; color: {t['total_text']};
             padding: 6px; border-radius: 4px;
@@ -136,6 +151,8 @@ def aplicar_tema(app, eleccion=None, guardar=False):
     for widget in app.allWidgets():
         if isinstance(widget, QTableWidget):
             recolorear_tabla(widget)
+    for funcion in _observadores:
+        funcion()
 
 
 def seguir_cambios_del_sistema(app):
