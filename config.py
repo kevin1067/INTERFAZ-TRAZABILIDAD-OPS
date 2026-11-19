@@ -9,8 +9,7 @@ from pathlib import Path
 # MÓDULO 1: config.py (Configuraciones y Constantes)
 # =====================================================================
 class Config:
-    #DEFAULT_DIR = Path(r"C:\Users\kzevallos\Desktop\Implementaciones\TRAZABILIDAD-OPS\migracion")
-    DEFAULT_DIR = Path(r"\\STNFSAPPRD01\Costos\Sunat 2025\Costo x Cliente 2025\BD Analiticos\Textil_Trazabilidad-no-borrar\migracion")
+    DEFAULT_DIR = Path("migracion")
     DB_HILADO = "control_hilados.db"
     DB_TEJIDOS = "control_tejidos.db"
     DB_RESUMEN = "resumen_op.db"
@@ -32,5 +31,12 @@ class Config:
         ("kgs", "Kgs"), ("dolares", "US$"), ("cu_usd", "C.U. US$"),("cu_usd_calc", "C.U.Real$")
     ]
     RESUMEN_HEADERS = [
-        ("op", "op"), ("categoria","categoria"), ("kg_netos","kg_netos"), ("valorizado_total","valorizado_total"), ("precio_unitario_ponderado","precio_unitario_ponderado")
+        ("op", "OP"), ("categoria", "Categoría"), ("kg_netos", "Kg netos"),
+        ("valorizado_total", "Valorizado US$"), ("precio_unitario_ponderado", "C.U. ponderado US$")
     ]
+
+    # Columnas numéricas -> cantidad de decimales a mostrar (miles con coma, alineado a la derecha)
+    NUMERIC_FORMATS = {
+        "kgs": 2, "dolares": 2, "cu_usd": 4, "cu_usd_calc": 4,
+        "kg_netos": 2, "valorizado_total": 2, "precio_unitario_ponderado": 2,
+    }

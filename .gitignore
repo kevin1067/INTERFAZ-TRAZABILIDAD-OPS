@@ -7,3 +7,4 @@ venv/
 main.dist/
 main.build/
 *.png
+migracion/

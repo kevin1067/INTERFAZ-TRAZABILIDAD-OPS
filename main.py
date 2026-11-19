@@ -4,16 +4,74 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QTableWidget, QTableWidgetItem,
     QStatusBar, QMessageBox, QHeaderView, QGroupBox, QCheckBox,
-    QFileDialog, QAbstractItemView, QDialog
+    QFileDialog, QAbstractItemView, QDialog, QComboBox
 )
 from PySide6.QtGui import QIcon
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QColor
+from PySide6.QtGui import QFont
 
+import themes
 from database import DatabaseManager
 from config import Config
 from service import ExcelService, to_float
 from pathlib import Path
+from itertools import groupby
+
+# =====================================================================
+# UTILIDADES DE TABLA
+# =====================================================================
+NUM_ROLE = Qt.ItemDataRole.UserRole  # Guarda el valor numérico real (para ordenar y exportar)
+
+
+class NumericItem(QTableWidgetItem):
+    """Celda numérica: muestra el valor con miles y decimales, alineado a la derecha,
+    y ordena/exporta por el valor real (no por el texto formateado)."""
+
+    def __init__(self, value, decimals=2):
+        num = None if value is None or str(value).strip() == "" else to_float(value)
+        super().__init__("" if num is None else f"{num:,.{decimals}f}")
+        self.setData(NUM_ROLE, num)
+        self.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+    def __lt__(self, other):
+        a, b = self.data(NUM_ROLE), other.data(NUM_ROLE)
+        if a is None or b is None:
+            return super().__lt__(other)
+        return a < b
+
+
+def crear_item(col, value):
+    """Devuelve una celda numérica si la columna está en Config.NUMERIC_FORMATS, si no una de texto."""
+    if col in Config.NUMERIC_FORMATS:
+        return NumericItem(value, Config.NUMERIC_FORMATS[col])
+    return QTableWidgetItem("" if value is None else str(value).strip())
+
+
+def tabla_a_df(tabla):
+    """Convierte un QTableWidget a DataFrame usando el valor numérico real cuando existe."""
+    columnas = tabla.columnCount()
+    headers = [tabla.horizontalHeaderItem(c).text() for c in range(columnas)]
+
+    datos = []
+    for r in range(tabla.rowCount()):
+        fila_data = []
+        for c in range(columnas):
+            item = tabla.item(r, c)
+            num = item.data(NUM_ROLE) if item else None
+            if num is not None:
+                valor = num
+            else:
+                valor = item.text() if item else ""
+                try:
+                    num = float(valor)
+                    valor = int(num) if num.is_integer() else num
+                except ValueError:
+                    pass
+            fila_data.append(valor)
+        datos.append(fila_data)
+
+    return pd.DataFrame(datos, columns=headers)
+
 
 # =====================================================================
 # NUEVA VENTANA: DetalleWindow (Vista Master-Detail)
@@ -44,28 +102,21 @@ class DetalleWindow(QDialog):
         self.tabla_detalle.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.tabla_detalle.horizontalHeader().setStretchLastSection(True)
         self.tabla_detalle.setSortingEnabled(True)
-        self.tabla_detalle.setStyleSheet("""
-            QTableWidget::item:selected {
-                background-color: #E2ECF8;
-                color: #000000;
-            }
-        """)
         layout.addWidget(self.tabla_detalle)
+
+        # Pie de totales: fijo debajo de la tabla, no se mueve al ordenar
+        self.total_label = QLabel("")
+        self.total_label.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        self.total_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.total_label.setObjectName("totalLabel")  # Colores según tema (themes.py)
+        layout.addWidget(self.total_label)
+        self._totales = {}
+
         btn_layout = QHBoxLayout()
         
         self.btn_exportar = QPushButton("📊 Exportar a Excel")
         self.btn_exportar.setCursor(Qt.PointingHandCursor)
-        self.btn_exportar.setStyleSheet("""
-            QPushButton {
-                background-color: #2E7D32; 
-                color: white; 
-                font-weight: bold; 
-                padding: 6px 16px; 
-                border-radius: 4px;
-            }
-            QPushButton:hover { background-color: #388E3C; }
-            QPushButton:pressed { background-color: #1B5E20; }
-        """)
+        self.btn_exportar.setObjectName("btnExportar")
         self.btn_exportar.clicked.connect(self.exportar_excel_detalle)
         
         # Alineamos el botón a la derecha
@@ -81,6 +132,7 @@ class DetalleWindow(QDialog):
             "envio de hilado a tintorería",
             "servicio teñido de hilado",
             "hilado enviado a tejeduría",
+            "servicio de reenconado",  # Servicio sobre hilado: se registra en mov_hilado
             "hilado sin valor comercial",
             "hilado transferencia multitech"
         ]
@@ -94,7 +146,6 @@ class DetalleWindow(QDialog):
             "servicio de tejeduría - tela principal",
             "servicio de tejeduría",
             "servicio de tintorería",
-            "servicio de reenconado",
             "servicio de post-teñido",
             "servicio de post-teñido (estampado-sublimado)",
             "envio de tela a cmt",
@@ -130,24 +181,45 @@ class DetalleWindow(QDialog):
         self.tabla_detalle.setRowCount(len(rows))
         self.tabla_detalle.setHorizontalHeaderLabels([label for _, label in headers])
 
-        kgs_idx = next((i for i, (c, _) in enumerate(headers) if c == "kgs"), None)
+        cols = [c for c, _ in headers]
+        kgs_idx = cols.index("kgs") if "kgs" in cols else None
+        usd_idx = cols.index("dolares") if "dolares" in cols else None
 
         for r, row in enumerate(rows):
             for c, value in enumerate(row):
-                display = "" if value is None else str(value).strip()
-                item = QTableWidgetItem(display)
-                
+                item = crear_item(cols[c], value)
+
                 if kgs_idx is not None and c == kgs_idx:
                     fval = to_float(value)
                     if fval < 0:
-                        item.setForeground(QColor("#FF5858"))
+                        item.setData(themes.ROLE_ESTILO, "negativo")
                     elif fval > 0:
-                        item.setForeground(QColor("#65DF6B"))
-                        
+                        item.setData(themes.ROLE_ESTILO, "positivo")
+
                 self.tabla_detalle.setItem(r, c, item)
 
+        themes.recolorear_tabla(self.tabla_detalle)
         self.tabla_detalle.resizeColumnsToContents()
         self.tabla_detalle.setSortingEnabled(True)
+        self._actualizar_totales(headers, rows, kgs_idx, usd_idx)
+
+    def _actualizar_totales(self, headers, rows, kgs_idx, usd_idx):
+        """Calcula y muestra el pie de totales (debe cuadrar con la fila del resumen)."""
+        total_kg = sum(to_float(r[kgs_idx]) for r in rows) if kgs_idx is not None else 0.0
+        total_usd = sum(to_float(r[usd_idx]) for r in rows) if usd_idx is not None else 0.0
+        cu = total_usd / total_kg if total_kg else None
+
+        self._totales = {}
+        if kgs_idx is not None:
+            self._totales[headers[kgs_idx][1]] = round(total_kg, 2)
+        if usd_idx is not None:
+            self._totales[headers[usd_idx][1]] = round(total_usd, 2)
+
+        cu_txt = f"{cu:,.2f}" if cu is not None else "-"
+        self.total_label.setText(
+            f"TOTAL  |  Movimientos: {len(rows):,}  |  Kg: {total_kg:,.2f}  |  "
+            f"US$: {total_usd:,.2f}  |  C.U. ponderado US$: {cu_txt}"
+        )
     
     def exportar_excel_detalle(self):
         if self.tabla_detalle.rowCount() == 0:
@@ -170,34 +242,16 @@ class DetalleWindow(QDialog):
             return
 
         try:
-            df = self._tabla_a_df(self.tabla_detalle)
+            df = tabla_a_df(self.tabla_detalle)
+            if self._totales:
+                fila_total = {df.columns[0]: "TOTAL", **self._totales}
+                df = pd.concat([df, pd.DataFrame([fila_total])], ignore_index=True)
             with pd.ExcelWriter(ruta_archivo, engine='openpyxl') as writer:
                 df.to_excel(writer, sheet_name='Detalle', index=False)
             
             QMessageBox.information(self, "Éxito", "Archivo exportado correctamente en:\n" + ruta_archivo)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Fallo al exportar:\n{str(e)}")
-
-    def _tabla_a_df(self, tabla):
-        filas = tabla.rowCount()
-        columnas = tabla.columnCount()
-        headers = [tabla.horizontalHeaderItem(c).text() for c in range(columnas)]
-        
-        datos = []
-        for r in range(filas):
-            fila_data = []
-            for c in range(columnas):
-                item = tabla.item(r, c)
-                valor = item.text() if item else ""
-                try:
-                    num = float(valor)
-                    valor = int(num) if num.is_integer() else num
-                except ValueError:
-                    pass
-                fila_data.append(valor)
-            datos.append(fila_data)
-            
-        return pd.DataFrame(datos, columns=headers)
 
 
 # =====================================================================
@@ -234,6 +288,20 @@ class TrazabilidadWindow(QMainWindow):
         self._build_resumen_table(main_layout)
         
         self.setStatusBar(QStatusBar())
+        self._build_selector_tema()
+
+    def _build_selector_tema(self):
+        """Selector de tema fijo a la derecha de la barra de estado (no se borra con Limpiar)."""
+        self.cmb_tema = QComboBox()
+        self.cmb_tema.addItems(list(themes.OPCIONES.keys()))
+        actual = next(k for k, v in themes.OPCIONES.items() if v == themes.preferencia())
+        self.cmb_tema.setCurrentText(actual)
+        self.cmb_tema.setToolTip("Sistema: sigue el modo claro/oscuro de Windows")
+        self.cmb_tema.currentTextChanged.connect(
+            lambda texto: themes.aplicar_tema(QApplication.instance(), themes.OPCIONES[texto], guardar=True)
+        )
+        self.statusBar().addPermanentWidget(QLabel("Tema:"))
+        self.statusBar().addPermanentWidget(self.cmb_tema)
 
     def _build_search_box(self, parent_layout):
         search_box = QGroupBox("Búsqueda")
@@ -267,7 +335,7 @@ class TrazabilidadWindow(QMainWindow):
 
         self.btn_exportar = QPushButton("📊 Exportar a Excel")
         self.btn_exportar.clicked.connect(self.exportar_excel)
-        self.btn_exportar.setStyleSheet("background-color: #2E7D32; color: white; font-weight: bold;")
+        self.btn_exportar.setObjectName("btnExportar")
         search_layout.addWidget(self.btn_exportar)
 
         parent_layout.addWidget(search_box)
@@ -281,13 +349,9 @@ class TrazabilidadWindow(QMainWindow):
         self.tabla_resumen.setAlternatingRowColors(True)
         self.tabla_resumen.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.tabla_resumen.horizontalHeader().setStretchLastSection(True)
-        self.tabla_resumen.setSortingEnabled(True)
-        self.tabla_resumen.setStyleSheet("""
-            QTableWidget::item:selected {
-                background-color: #E2ECF8;
-                color: #000000;
-            }
-        """)
+        # El orden del resumen es de negocio (OP -> flujo productivo) y contiene filas de
+        # subtotal, por eso no se permite reordenar con clic en el encabezado.
+        self.tabla_resumen.setSortingEnabled(False)
         parent_layout.addWidget(self.tabla_resumen)
 
     # --- Acciones UI ---
@@ -379,7 +443,7 @@ class TrazabilidadWindow(QMainWindow):
             "servicio de reenconado",
             "servicio de post-teñido",
             "servicio de post-teñido (estampado-sublimado)",
-            "envio de tela a CMT",
+            "envio de tela a cmt",
             "transferencia de partidas",
             "hilado sin valor comercial",
             "hilado transferencia multitech"
@@ -388,73 +452,105 @@ class TrazabilidadWindow(QMainWindow):
         # 2. Creamos un diccionario para asignar un "peso" numérico a cada categoría
         mapa_orden = {cat: index for index, cat in enumerate(orden_categorias)}
 
-        # 3. Función clave para ordenar las filas
-        def sort_key(row):
-            # Según tu Config.RESUMEN_HEADERS, la categoría está en el índice 1 de la tupla devuelta
-            cat = str(row[1]).strip().lower() 
-            # Si la categoría está en nuestra lista, le asigna su posición.
-            # Si en el futuro aparece una nueva no mapeada, le asigna 999 para enviarla al final.
-            return mapa_orden.get(cat, 999) 
+        # 3. Posición de cada OP según el orden de ingreso (Excel o campo de texto)
+        mapa_op = {str(op).strip(): i for i, op in enumerate(lista_ops)}
 
-        # 4. Ordenamos la lista de resultados usando la función clave
+        # 4. Ordenamos primero por OP y luego por el flujo productivo de la categoría.
+        #    Categorías no mapeadas reciben 999 y van al final de su OP.
+        def sort_key(row):
+            op = str(row[0]).strip()
+            cat = str(row[1]).strip().lower()
+            return (mapa_op.get(op, len(mapa_op)), op, mapa_orden.get(cat, 999))
+
         resumen_rows = sorted(resumen_rows, key=sort_key)
 
         self._llenar_tabla_resumen(Config.RESUMEN_HEADERS, resumen_rows)
-        self.resumen_label.setText(f"Búsqueda: {op_text_resumen} | Resultados: {len(resumen_rows)} categorías")
+        n_ops = len({str(row[0]).strip() for row in resumen_rows})
+        self.resumen_label.setText(
+            f"Búsqueda: {op_text_resumen} | OPs con datos: {n_ops} | Registros: {len(resumen_rows)}"
+        )
 
     def _llenar_tabla_resumen(self, headers, rows):
-        self.tabla_resumen.setSortingEnabled(False)
-        self.tabla_resumen.setRowCount(len(rows))
-        
+        """Llena el resumen agrupado por OP (las filas deben venir ordenadas por OP), con una
+        fila de subtotal por OP y un total general en lote. Devuelve la cantidad de OPs."""
+        cols = [c for c, _ in headers]
+        op_idx = cols.index("op") if "op" in cols else 0
+        cat_idx = cols.index("categoria") if "categoria" in cols else 1
+        val_idx = cols.index("valorizado_total")
+
+        # Armamos la lista de filas a pintar: datos + subtotal por OP + total general
+        filas = []
+        for op, grupo in groupby(rows, key=lambda row: str(row[op_idx]).strip()):
+            grupo = list(grupo)
+            filas.extend(("dato", row) for row in grupo)
+            #subtotal = sum(to_float(row[val_idx]) for row in grupo)
+            #filas.append(("subtotal", f"Subtotal OP {op}", subtotal))
+
+        #n_ops = sum(1 for f in filas if f[0] == "subtotal")
+        #if n_ops == 1:
+        #    _, etiqueta, valor = filas[-1]
+        #    filas[-1] = ("total", etiqueta.replace("Subtotal", "TOTAL"), valor)
+        #elif n_ops > 1:
+        #    total = sum(f[2] for f in filas if f[0] == "subtotal")
+        #    filas.append(("total", f"TOTAL LOTE ({n_ops} OPs)", total))
+
+        self.tabla_resumen.clearSpans()
+        self.tabla_resumen.setRowCount(0)  # Limpia también los botones de la búsqueda anterior
+        self.tabla_resumen.setRowCount(len(filas))
+
         # Preparamos las etiquetas añadiendo "Acción" al final
         labels = [label for _, label in headers] + ["Acción"]
         self.tabla_resumen.setColumnCount(len(labels))
         self.tabla_resumen.setHorizontalHeaderLabels(labels)
 
-        # Buscar el índice de las columnas clave para pasarlas al botón
-        op_idx = next((i for i, (c, _) in enumerate(headers) if c == "op"), 0)
-        cat_idx = next((i for i, (c, _) in enumerate(headers) if c == "categoria"), 1)
-
-        for r, row in enumerate(rows):
-            for c, value in enumerate(row):
-                display = "" if value is None else str(value).strip()
-                item = QTableWidgetItem(display)
-                self.tabla_resumen.setItem(r, c, item)
-            
-            # --- AGREGAR EL BOTÓN AL FINAL DE LA FILA ---
-            op_val = str(row[op_idx])
-            cat_val = str(row[cat_idx])
-            
-            btn_detalle = QPushButton("🔍 Ver Detalle")
-            btn_detalle.setCursor(Qt.PointingHandCursor)
-            btn_detalle.setStyleSheet("""
-                QPushButton {
-                    background-color: #2B2D30;      /* Fondo gris oscuro */
-                    color: #DFE1E5;                 /* Texto gris claro/blanco */
-                    border: 1px solid #43454A;      /* Borde sutil */
-                    border-radius: 4px;
-                    padding: 4px 8px;
-                    font-size: 11px;
-                }
-                QPushButton:hover {
-                    background-color: #35373C;      /* Se aclara sutilmente al pasar el cursor */
-                    color: #FFFFFF;                 /* Texto blanco brillante */
-                    border: 1px solid #5E6168;      /* Borde más visible */
-                }
-                QPushButton:pressed {
-                    background-color: #1E1F22;      /* Se oscurece al hacer clic */
-                    color: #9DA0A8;                 /* Texto más opaco */
-                }
-            """)
-            
-            # Usamos lambda con parámetros por defecto para capturar correctamente los valores del bucle
-            btn_detalle.clicked.connect(lambda checked=False, o=op_val, c=cat_val: self.abrir_detalle(o, c))
-            
-            # Insertamos el botón en la última columna de la fila
-            self.tabla_resumen.setCellWidget(r, len(row), btn_detalle)
+        for r, fila in enumerate(filas):
+            if fila[0] == "dato":
+                self._pintar_fila_dato(r, cols, fila[1], op_idx, cat_idx)
+            else:
+                self._pintar_fila_total(r, cols, *fila)
 
         self.tabla_resumen.resizeColumnsToContents()
-        self.tabla_resumen.setSortingEnabled(True)
+        #return n_ops
+
+    def _pintar_fila_total(self, r, cols, tipo, etiqueta, valor):
+        """Fila de subtotal/total: solo suma el valorizado (los kg mezclan hilado, tela y servicios)."""
+        fuente = QFont()
+        fuente.setBold(True)
+        ayuda = ("Suma con signo de las categorías (entradas − envíos).\n"
+                 "Los kg no se suman porque mezclan hilado, tela y servicios.")
+
+        for c in range(len(cols) + 1):  # +1 = columna "Acción"
+            if c == 0:
+                item = QTableWidgetItem(etiqueta)
+            elif c < len(cols) and cols[c] == "valorizado_total":
+                item = NumericItem(valor, Config.NUMERIC_FORMATS["valorizado_total"])
+            else:
+                item = QTableWidgetItem("")
+            item.setData(themes.ROLE_ESTILO, tipo)  # "subtotal" | "total": colores según tema
+            item.setFont(fuente)
+            item.setToolTip(ayuda)
+            self.tabla_resumen.setItem(r, c, item)
+
+        self.tabla_resumen.setSpan(r, 0, 1, 2)  # La etiqueta ocupa OP + Categoría
+        themes.recolorear_tabla(self.tabla_resumen)
+
+    def _pintar_fila_dato(self, r, cols, row, op_idx, cat_idx):
+        for c, value in enumerate(row):
+            self.tabla_resumen.setItem(r, c, crear_item(cols[c], value))
+
+        # --- AGREGAR EL BOTÓN AL FINAL DE LA FILA ---
+        op_val = str(row[op_idx])
+        cat_val = str(row[cat_idx])
+
+        btn_detalle = QPushButton("🔍 Ver Detalle")
+        btn_detalle.setCursor(Qt.PointingHandCursor)
+        btn_detalle.setObjectName("btnDetalle")  # Colores según tema (themes.py)
+
+        # Usamos lambda con parámetros por defecto para capturar correctamente los valores del bucle
+        btn_detalle.clicked.connect(lambda checked=False, o=op_val, c=cat_val: self.abrir_detalle(o, c))
+        
+        # Insertamos el botón en la última columna de la fila
+        self.tabla_resumen.setCellWidget(r, len(row), btn_detalle)
 
     def abrir_detalle(self, op, categoria):
         """Instancia y muestra la ventana de detalle para la OP y categoría especificadas."""
@@ -478,7 +574,7 @@ class TrazabilidadWindow(QMainWindow):
             return
 
         try:
-            df_resumen = self._tabla_a_df(self.tabla_resumen)
+            df_resumen = tabla_a_df(self.tabla_resumen)
             # Removemos la última columna ("Acción") ya que contiene los widgets de los botones
             if "Acción" in df_resumen.columns:
                 df_resumen = df_resumen.drop(columns=["Acción"])
@@ -491,33 +587,14 @@ class TrazabilidadWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Fallo al exportar:\n{str(e)}")
 
-    def _tabla_a_df(self, tabla):
-        filas = tabla.rowCount()
-        columnas = tabla.columnCount()
-        headers = [tabla.horizontalHeaderItem(c).text() for c in range(columnas)]
-        
-        datos = []
-        for r in range(filas):
-            fila_data = []
-            for c in range(columnas):
-                item = tabla.item(r, c)
-                valor = item.text() if item else ""
-                try:
-                    num = float(valor)
-                    valor = int(num) if num.is_integer() else num
-                except ValueError:
-                    pass
-                fila_data.append(valor)
-            datos.append(fila_data)
-            
-        return pd.DataFrame(datos, columns=headers)
-
 # =====================================================================
 # EJECUCIÓN DEL SCRIPT
 # =====================================================================
 def main():
     db_dir = sys.argv[1] if len(sys.argv) > 1 else Config.DEFAULT_DIR
     app = QApplication(sys.argv)
+    themes.aplicar_tema(app)               # Tema guardado del usuario (por defecto: Sistema)
+    themes.seguir_cambios_del_sistema(app)
     window = TrazabilidadWindow(db_dir)
     window.show()
     sys.exit(app.exec())
