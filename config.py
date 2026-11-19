@@ -9,8 +9,7 @@ from pathlib import Path
 # MÓDULO 1: config.py (Configuraciones y Constantes)
 # =====================================================================
 class Config:
-    #DEFAULT_DIR = Path(r"C:\Users\kzevallos\Desktop\Implementaciones\TRAZABILIDAD-OPS\migracion")
-    DEFAULT_DIR = Path(r"\\STNFSAPPRD01\Costos\Sunat 2025\Costo x Cliente 2025\BD Analiticos\Textil_Trazabilidad-no-borrar\migracion")
+    DEFAULT_DIR = Path("migracion")
     DB_HILADO = "control_hilados.db"
     DB_TEJIDOS = "control_tejidos.db"
     DB_RESUMEN = "resumen_op.db"
