@@ -4,12 +4,13 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QTableWidget, QTableWidgetItem,
     QStatusBar, QMessageBox, QHeaderView, QGroupBox, QCheckBox,
-    QFileDialog, QAbstractItemView, QDialog
+    QFileDialog, QAbstractItemView, QDialog, QComboBox
 )
 from PySide6.QtGui import QIcon
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QColor
+from PySide6.QtGui import QFont
 
+import themes
 from database import DatabaseManager
 from config import Config
 from service import ExcelService, to_float
@@ -101,19 +102,13 @@ class DetalleWindow(QDialog):
         self.tabla_detalle.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.tabla_detalle.horizontalHeader().setStretchLastSection(True)
         self.tabla_detalle.setSortingEnabled(True)
-        self.tabla_detalle.setStyleSheet("""
-            QTableWidget::item:selected {
-                background-color: #E2ECF8;
-                color: #000000;
-            }
-        """)
         layout.addWidget(self.tabla_detalle)
 
         # Pie de totales: fijo debajo de la tabla, no se mueve al ordenar
         self.total_label = QLabel("")
         self.total_label.setFont(QFont("Arial", 10, QFont.Weight.Bold))
         self.total_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.total_label.setStyleSheet("background-color: #DCE3EC; padding: 6px; border-radius: 4px;")
+        self.total_label.setObjectName("totalLabel")  # Colores según tema (themes.py)
         layout.addWidget(self.total_label)
         self._totales = {}
 
@@ -121,17 +116,7 @@ class DetalleWindow(QDialog):
         
         self.btn_exportar = QPushButton("📊 Exportar a Excel")
         self.btn_exportar.setCursor(Qt.PointingHandCursor)
-        self.btn_exportar.setStyleSheet("""
-            QPushButton {
-                background-color: #2E7D32; 
-                color: white; 
-                font-weight: bold; 
-                padding: 6px 16px; 
-                border-radius: 4px;
-            }
-            QPushButton:hover { background-color: #388E3C; }
-            QPushButton:pressed { background-color: #1B5E20; }
-        """)
+        self.btn_exportar.setObjectName("btnExportar")
         self.btn_exportar.clicked.connect(self.exportar_excel_detalle)
         
         # Alineamos el botón a la derecha
@@ -147,6 +132,7 @@ class DetalleWindow(QDialog):
             "envio de hilado a tintorería",
             "servicio teñido de hilado",
             "hilado enviado a tejeduría",
+            "servicio de reenconado",  # Servicio sobre hilado: se registra en mov_hilado
             "hilado sin valor comercial",
             "hilado transferencia multitech"
         ]
@@ -160,7 +146,6 @@ class DetalleWindow(QDialog):
             "servicio de tejeduría - tela principal",
             "servicio de tejeduría",
             "servicio de tintorería",
-            "servicio de reenconado",
             "servicio de post-teñido",
             "servicio de post-teñido (estampado-sublimado)",
             "envio de tela a cmt",
@@ -207,12 +192,13 @@ class DetalleWindow(QDialog):
                 if kgs_idx is not None and c == kgs_idx:
                     fval = to_float(value)
                     if fval < 0:
-                        item.setForeground(QColor("#FF5858"))
+                        item.setData(themes.ROLE_ESTILO, "negativo")
                     elif fval > 0:
-                        item.setForeground(QColor("#65DF6B"))
+                        item.setData(themes.ROLE_ESTILO, "positivo")
 
                 self.tabla_detalle.setItem(r, c, item)
 
+        themes.recolorear_tabla(self.tabla_detalle)
         self.tabla_detalle.resizeColumnsToContents()
         self.tabla_detalle.setSortingEnabled(True)
         self._actualizar_totales(headers, rows, kgs_idx, usd_idx)
@@ -229,7 +215,7 @@ class DetalleWindow(QDialog):
         if usd_idx is not None:
             self._totales[headers[usd_idx][1]] = round(total_usd, 2)
 
-        cu_txt = f"{cu:,.4f}" if cu is not None else "-"
+        cu_txt = f"{cu:,.2f}" if cu is not None else "-"
         self.total_label.setText(
             f"TOTAL  |  Movimientos: {len(rows):,}  |  Kg: {total_kg:,.2f}  |  "
             f"US$: {total_usd:,.2f}  |  C.U. ponderado US$: {cu_txt}"
@@ -302,6 +288,20 @@ class TrazabilidadWindow(QMainWindow):
         self._build_resumen_table(main_layout)
         
         self.setStatusBar(QStatusBar())
+        self._build_selector_tema()
+
+    def _build_selector_tema(self):
+        """Selector de tema fijo a la derecha de la barra de estado (no se borra con Limpiar)."""
+        self.cmb_tema = QComboBox()
+        self.cmb_tema.addItems(list(themes.OPCIONES.keys()))
+        actual = next(k for k, v in themes.OPCIONES.items() if v == themes.preferencia())
+        self.cmb_tema.setCurrentText(actual)
+        self.cmb_tema.setToolTip("Sistema: sigue el modo claro/oscuro de Windows")
+        self.cmb_tema.currentTextChanged.connect(
+            lambda texto: themes.aplicar_tema(QApplication.instance(), themes.OPCIONES[texto], guardar=True)
+        )
+        self.statusBar().addPermanentWidget(QLabel("Tema:"))
+        self.statusBar().addPermanentWidget(self.cmb_tema)
 
     def _build_search_box(self, parent_layout):
         search_box = QGroupBox("Búsqueda")
@@ -335,7 +335,7 @@ class TrazabilidadWindow(QMainWindow):
 
         self.btn_exportar = QPushButton("📊 Exportar a Excel")
         self.btn_exportar.clicked.connect(self.exportar_excel)
-        self.btn_exportar.setStyleSheet("background-color: #2E7D32; color: white; font-weight: bold;")
+        self.btn_exportar.setObjectName("btnExportar")
         search_layout.addWidget(self.btn_exportar)
 
         parent_layout.addWidget(search_box)
@@ -352,12 +352,6 @@ class TrazabilidadWindow(QMainWindow):
         # El orden del resumen es de negocio (OP -> flujo productivo) y contiene filas de
         # subtotal, por eso no se permite reordenar con clic en el encabezado.
         self.tabla_resumen.setSortingEnabled(False)
-        self.tabla_resumen.setStyleSheet("""
-            QTableWidget::item:selected {
-                background-color: #E2ECF8;
-                color: #000000;
-            }
-        """)
         parent_layout.addWidget(self.tabla_resumen)
 
     # --- Acciones UI ---
@@ -470,7 +464,8 @@ class TrazabilidadWindow(QMainWindow):
 
         resumen_rows = sorted(resumen_rows, key=sort_key)
 
-        n_ops = self._llenar_tabla_resumen(Config.RESUMEN_HEADERS, resumen_rows)
+        self._llenar_tabla_resumen(Config.RESUMEN_HEADERS, resumen_rows)
+        n_ops = len({str(row[0]).strip() for row in resumen_rows})
         self.resumen_label.setText(
             f"Búsqueda: {op_text_resumen} | OPs con datos: {n_ops} | Registros: {len(resumen_rows)}"
         )
@@ -488,16 +483,16 @@ class TrazabilidadWindow(QMainWindow):
         for op, grupo in groupby(rows, key=lambda row: str(row[op_idx]).strip()):
             grupo = list(grupo)
             filas.extend(("dato", row) for row in grupo)
-            subtotal = sum(to_float(row[val_idx]) for row in grupo)
-            filas.append(("subtotal", f"Subtotal OP {op}", subtotal))
+            #subtotal = sum(to_float(row[val_idx]) for row in grupo)
+            #filas.append(("subtotal", f"Subtotal OP {op}", subtotal))
 
-        n_ops = sum(1 for f in filas if f[0] == "subtotal")
-        if n_ops == 1:
-            _, etiqueta, valor = filas[-1]
-            filas[-1] = ("total", etiqueta.replace("Subtotal", "TOTAL"), valor)
-        elif n_ops > 1:
-            total = sum(f[2] for f in filas if f[0] == "subtotal")
-            filas.append(("total", f"TOTAL LOTE ({n_ops} OPs)", total))
+        #n_ops = sum(1 for f in filas if f[0] == "subtotal")
+        #if n_ops == 1:
+        #    _, etiqueta, valor = filas[-1]
+        #    filas[-1] = ("total", etiqueta.replace("Subtotal", "TOTAL"), valor)
+        #elif n_ops > 1:
+        #    total = sum(f[2] for f in filas if f[0] == "subtotal")
+        #    filas.append(("total", f"TOTAL LOTE ({n_ops} OPs)", total))
 
         self.tabla_resumen.clearSpans()
         self.tabla_resumen.setRowCount(0)  # Limpia también los botones de la búsqueda anterior
@@ -515,11 +510,10 @@ class TrazabilidadWindow(QMainWindow):
                 self._pintar_fila_total(r, cols, *fila)
 
         self.tabla_resumen.resizeColumnsToContents()
-        return n_ops
+        #return n_ops
 
     def _pintar_fila_total(self, r, cols, tipo, etiqueta, valor):
         """Fila de subtotal/total: solo suma el valorizado (los kg mezclan hilado, tela y servicios)."""
-        fondo = QColor("#DCE3EC") if tipo == "total" else QColor("#EEF1F5")
         fuente = QFont()
         fuente.setBold(True)
         ayuda = ("Suma con signo de las categorías (entradas − envíos).\n"
@@ -532,12 +526,13 @@ class TrazabilidadWindow(QMainWindow):
                 item = NumericItem(valor, Config.NUMERIC_FORMATS["valorizado_total"])
             else:
                 item = QTableWidgetItem("")
-            item.setBackground(fondo)
+            item.setData(themes.ROLE_ESTILO, tipo)  # "subtotal" | "total": colores según tema
             item.setFont(fuente)
             item.setToolTip(ayuda)
             self.tabla_resumen.setItem(r, c, item)
 
         self.tabla_resumen.setSpan(r, 0, 1, 2)  # La etiqueta ocupa OP + Categoría
+        themes.recolorear_tabla(self.tabla_resumen)
 
     def _pintar_fila_dato(self, r, cols, row, op_idx, cat_idx):
         for c, value in enumerate(row):
@@ -549,26 +544,8 @@ class TrazabilidadWindow(QMainWindow):
 
         btn_detalle = QPushButton("🔍 Ver Detalle")
         btn_detalle.setCursor(Qt.PointingHandCursor)
-        btn_detalle.setStyleSheet("""
-            QPushButton {
-                background-color: #2B2D30;      /* Fondo gris oscuro */
-                color: #DFE1E5;                 /* Texto gris claro/blanco */
-                border: 1px solid #43454A;      /* Borde sutil */
-                border-radius: 4px;
-                padding: 4px 8px;
-                font-size: 11px;
-            }
-            QPushButton:hover {
-                background-color: #35373C;      /* Se aclara sutilmente al pasar el cursor */
-                color: #FFFFFF;                 /* Texto blanco brillante */
-                border: 1px solid #5E6168;      /* Borde más visible */
-            }
-            QPushButton:pressed {
-                background-color: #1E1F22;      /* Se oscurece al hacer clic */
-                color: #9DA0A8;                 /* Texto más opaco */
-            }
-        """)
-        
+        btn_detalle.setObjectName("btnDetalle")  # Colores según tema (themes.py)
+
         # Usamos lambda con parámetros por defecto para capturar correctamente los valores del bucle
         btn_detalle.clicked.connect(lambda checked=False, o=op_val, c=cat_val: self.abrir_detalle(o, c))
         
@@ -616,6 +593,8 @@ class TrazabilidadWindow(QMainWindow):
 def main():
     db_dir = sys.argv[1] if len(sys.argv) > 1 else Config.DEFAULT_DIR
     app = QApplication(sys.argv)
+    themes.aplicar_tema(app)               # Tema guardado del usuario (por defecto: Sistema)
+    themes.seguir_cambios_del_sistema(app)
     window = TrazabilidadWindow(db_dir)
     window.show()
     sys.exit(app.exec())
