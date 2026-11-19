@@ -4,13 +4,14 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QTableWidget, QTableWidgetItem,
     QStatusBar, QMessageBox, QHeaderView, QGroupBox, QCheckBox,
-    QFileDialog, QAbstractItemView, QDialog, QComboBox
+    QFileDialog, QAbstractItemView, QDialog, QComboBox, QTabWidget
 )
 from PySide6.QtGui import QIcon
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 
 import themes
+from dashboard import DashboardWidget
 from database import DatabaseManager
 from config import Config
 from service import ExcelService, to_float
@@ -264,7 +265,7 @@ class TrazabilidadWindow(QMainWindow):
         self.ops_lote = []
         
         self.setWindowTitle("Resumen General de OPs")
-        self.resize(1000, 600)
+        self.resize(1200, 760)
         self._build_ui()
         self._update_status()
         self.setWindowIcon(QIcon("logo/inspeccion.png"))
@@ -284,9 +285,17 @@ class TrazabilidadWindow(QMainWindow):
         self.resumen_label.setFont(QFont("Arial", 10, QFont.Bold))
         main_layout.addWidget(self.resumen_label)
 
-        # Ahora solo construimos la tabla de resumen general
-        self._build_resumen_table(main_layout)
-        
+        # Pestañas: Resumen (tabla) y Dashboard (gráficos), ambas sobre la misma búsqueda
+        self.tabs = QTabWidget()
+        tab_resumen = QWidget()
+        lay_resumen = QVBoxLayout(tab_resumen)
+        lay_resumen.setContentsMargins(0, 8, 0, 0)
+        self._build_resumen_table(lay_resumen)
+        self.dashboard = DashboardWidget()
+        self.tabs.addTab(tab_resumen, "📋 Resumen")
+        self.tabs.addTab(self.dashboard, "📈 Dashboard")
+        main_layout.addWidget(self.tabs)
+
         self.setStatusBar(QStatusBar())
         self._build_selector_tema()
 
@@ -380,6 +389,7 @@ class TrazabilidadWindow(QMainWindow):
         self.tabla_resumen.setRowCount(0)
         self.statusBar().showMessage("")
         self.resumen_label.setText("")
+        self.dashboard.limpiar()
         self.op_input.setFocus()
 
     def cargar_excel_ops(self):
@@ -465,6 +475,7 @@ class TrazabilidadWindow(QMainWindow):
         resumen_rows = sorted(resumen_rows, key=sort_key)
 
         self._llenar_tabla_resumen(Config.RESUMEN_HEADERS, resumen_rows)
+        self.dashboard.set_data(resumen_rows)
         n_ops = len({str(row[0]).strip() for row in resumen_rows})
         self.resumen_label.setText(
             f"Búsqueda: {op_text_resumen} | OPs con datos: {n_ops} | Registros: {len(resumen_rows)}"
