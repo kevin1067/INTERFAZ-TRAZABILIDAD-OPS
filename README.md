@@ -13,6 +13,7 @@ Funciona igual en **Windows** y **macOS**. Abajo, cada comando aparece para los 
 ## 1. Descargar los datos de prueba
 
 Los datos de prueba vienen en un archivo comprimido, **`migracion.zip`**, con tres bases SQLite:
+del siguiente link: [drive](https://drive.google.com/drive/folders/1UHJtMbRVIWMLGmJW5TV-rpZyKL6yOYNc?usp=sharing)
 
 | Archivo | Contenido |
 |---|---|
